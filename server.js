@@ -69,6 +69,8 @@ function loadRooms() {
     for (const room of raw.rooms) {
       // 旧存档没有 spectators 字段时补空
       if (!Array.isArray(room.spectators)) room.spectators = [];
+      // 旧存档没有主题词包字段：补 null（使用默认词池）
+      if (!('wordPack' in room)) room.wordPack = null;
       // 重启后不存在任何活动连接。玩家保留座位、置离线，凭 token 重连恢复；
       // 观战者是临时只读身份，立即清出——不能让他们在大厅/对局名单里挂到延迟清理才消失，
       // 也不能虚占在线名额让新观战者撞上"已满"。想继续看的人重新输入房间码即可。
@@ -346,6 +348,16 @@ const handlers = {
     broadcast(room);
   },
 
+  // 主题词包：房主在大厅选用本机词包（内容作为快照进入房间状态，全员可见）；
+  // 失败带上下文，客户端据此在词包选择处就地提示。
+  setWordPack(ws, ctx, msg) {
+    const room = ctxRoom(ctx);
+    if (!room) return sendErr(ws, '房间已不存在', 'setWordPack');
+    const err = game.setWordPack(room, ctx.playerId, msg.pack ?? null);
+    if (err) return sendErr(ws, err, 'setWordPack');
+    broadcast(room);
+  },
+
   startGame(ws, ctx) {
     const room = ctxRoom(ctx);
     if (!room) return;
@@ -459,7 +471,7 @@ function ctxRoom(ctx) {
 // 纵深防御：game.js 内已按身份拒绝所有写操作，这里在协议层统一拦截，
 // 保证观战 token 即使伪造消息也无法接词、加固、质疑、改规则或开始游戏。
 const SPECTATOR_FORBIDDEN = new Set([
-  'setRules', 'startGame', 'play', 'reinforce', 'endTurn', 'challenge', 'resolve',
+  'setRules', 'setWordPack', 'startGame', 'play', 'reinforce', 'endTurn', 'challenge', 'resolve',
 ]);
 
 function sendErr(ws, message, context) {

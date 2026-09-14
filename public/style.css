@@ -249,8 +249,17 @@ button.danger-link { border: none; background: none; color: var(--danger); paddi
 .stat.win .stat-v { color: #1e8e4f; }
 @media (max-width: 480px) { .stat-grid { grid-template-columns: repeat(2, 1fr); } }
 
-/* 复习模式 */
-.review-card { padding: 28px 22px; }
+/* 主题词包 */
+#pack-card .pack-theme-line { font-size: 14px; margin: 4px 0 8px; }
+.pack-words { display: flex; gap: 6px; flex-wrap: wrap; margin: 6px 0; }
+.pack-chip {
+  background: var(--bg); border: 1px solid var(--line); border-radius: 14px;
+  padding: 2px 10px; font-size: 13px;
+}
+#pack-host-row select { width: auto; min-width: 200px; margin-top: 0; }
+#pack-editor textarea { resize: vertical; }
+
+/* 复习模式 */.review-card { padding: 28px 22px; }
 .review-front { text-align: center; }
 .review-word { font-size: 34px; font-weight: 700; letter-spacing: 2px; margin: 10px 0 14px; }
 .review-relation .badge { font-size: 13px; padding: 3px 12px; }

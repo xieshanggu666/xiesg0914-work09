@@ -89,9 +89,27 @@ async function main() {
   await B.waitFor(c => c.msgs.some(m => m.type === 'error' && m.context === 'setRules'));
   check('非房主修改被拒绝', B.state.ruleSet.turnSeconds === 120);
 
+  // 主题词包：非法词包被拒绝（带上下文）；房主设置合法词包后全员可见主题与候选词
+  A.send({ type: 'setWordPack', pack: { name: '海洋', theme: '', words: ['海浪', '贝壳'] } });
+  await A.waitFor(c => c.msgs.some(m => m.type === 'error' && m.context === 'setWordPack'));
+  check('候选词不足的词包被拒绝', !A.state.wordPack);
+  const PACK = { id: 'pk_e2e', name: '海洋奇缘', theme: '一切都与大海有关',
+    words: ['海浪', '贝壳', '灯塔', '海鸥', '帆船', '珊瑚'] };
+  A.send({ type: 'setWordPack', pack: PACK });
+  await A.waitFor(c => c.state.wordPack && c.state.wordPack.name === '海洋奇缘');
+  await B.waitFor(c => c.state.wordPack && c.state.wordPack.name === '海洋奇缘');
+  check('房主选用词包后全员看到主题与候选词',
+    B.state.wordPack.theme === '一切都与大海有关' && B.state.wordPack.words.length === 6);
+  B.send({ type: 'setWordPack', pack: null });
+  await B.waitFor(c => c.msgs.some(m => m.type === 'error' && m.context === 'setWordPack'));
+  check('非房主不能更换词包', !!B.state.wordPack);
+
   A.send({ type: 'startGame' });
   await A.waitFor(c => c.state.phase === 'playing');
   check('开局', A.state.nodes.length === 3);
+  check('起始词从词包中不重复抽取',
+    A.state.startWords.every(w => PACK.words.includes(w)) &&
+    new Set(A.state.startWords).size === A.state.startWords.length);
   const first = A.state.turn.playerId;
   const active = first === A.state.you ? A : B;
   const other = first === A.state.you ? B : A;
@@ -187,13 +205,14 @@ async function main() {
     ['challenge', { nodeId }],
     ['resolve', { verdict: 'uphold' }],
     ['setRules', { ruleSet: { turnSeconds: 30 } }],
+    ['setWordPack', { pack: null }],
     ['startGame', {}],
   ]) {
     S.send({ type: m, ...extra });
   }
   await sleep(300);
   const denied = S.msgs.filter(m => m.type === 'error' && /观战|只读/.test(m.message)).length;
-  check('观战者的全部行动被拒绝（7 项）', denied >= 7);
+  check('观战者的全部行动被拒绝（8 项）', denied >= 8);
   check('观战者捣乱未改变局面',
     S.state.nodes.length === A1.state.nodes.length && !S.state.nodes.some(n => n.word === '捣乱词'));
 

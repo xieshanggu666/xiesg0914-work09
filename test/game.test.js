@@ -362,3 +362,73 @@ test('房主在线时，新质疑的裁定者仍是房主', () => {
   assert.strictEqual(g.challenge(room, 'p2', n1.id), null);
   assert.strictEqual(room.pendingChallenge.adjudicatorId, 'p0');
 });
+
+// ---------- 主题词包 ----------
+
+const PACK = { id: 'pk1', name: '海洋', theme: '一切都与大海有关',
+  words: ['海浪', '贝壳', '灯塔', '海鸥', '帆船'] };
+
+function lobbyRoom(playerNames = ['甲', '乙']) {
+  const room = g.newRoom('PACK', 'p0', playerNames[0]);
+  playerNames.forEach((n, i) => g.addPlayer(room, `p${i}`, n));
+  return room;
+}
+
+test('主题词包：房主设置后开局从候选词中不重复抽取', () => {
+  const room = lobbyRoom();
+  assert.strictEqual(g.setWordPack(room, 'p0', PACK), null);
+  assert.deepStrictEqual(room.wordPack.words, PACK.words);
+  assert.strictEqual(g.startGame(room, 'p0', () => 0.01), null);
+  assert.strictEqual(room.startWords.length, room.ruleSet.startWordCount);
+  assert.ok(room.startWords.every(w => PACK.words.includes(w)), '起始词全部来自词包');
+  assert.strictEqual(new Set(room.startWords).size, room.startWords.length, '不重复抽取');
+  // 开局日志记录了词包名，回放首帧能看到主题
+  const start = room.log.find(e => e.type === 'start');
+  assert.strictEqual(start.wordPack, '海洋');
+  const frames = g.buildReplay(room);
+  assert.match(frames.find(f => f.label.includes('起始词')).label, /海洋/);
+});
+
+test('主题词包：候选词不足 startWordCount 时有多少抽多少', () => {
+  const room = lobbyRoom();
+  assert.strictEqual(g.setWordPack(room, 'p0', { ...PACK, words: ['海浪', '贝壳', '灯塔'] }), null);
+  assert.strictEqual(g.startGame(room, 'p0', () => 0.01), null);
+  assert.deepStrictEqual(room.startWords.sort(), ['灯塔', '海浪', '贝壳'].sort());
+});
+
+test('主题词包：非房主/非大厅阶段不能设置，观战者不能设置', () => {
+  const room = lobbyRoom();
+  assert.match(g.setWordPack(room, 'p1', PACK), /房主/);
+  g.addSpectator(room, 'sp_1', '看客');
+  assert.match(g.setWordPack(room, 'sp_1', PACK), /观战/);
+  assert.strictEqual(g.startGame(room, 'p0', () => 0.01), null);
+  assert.match(g.setWordPack(room, 'p0', PACK), /开始后/);
+});
+
+test('主题词包：非法词包被拒绝，清除后回退默认词池', () => {
+  const room = lobbyRoom();
+  assert.match(g.setWordPack(room, 'p0', { name: '', theme: '', words: PACK.words }), /名称/);
+  assert.match(g.setWordPack(room, 'p0', { name: 'x', theme: '', words: ['甲', '乙'] }), /至少/);
+  assert.match(g.setWordPack(room, 'p0', { name: 'x', theme: '', words: 'not-array' }), /至少/);
+  assert.strictEqual(g.setWordPack(room, 'p0', null), null, '未设置时清除也是允许的');
+  assert.strictEqual(g.setWordPack(room, 'p0', PACK), null);
+  assert.strictEqual(g.setWordPack(room, 'p0', null), null);
+  assert.strictEqual(room.wordPack, null);
+  assert.strictEqual(g.startGame(room, 'p0', () => 0.01), null);
+  assert.ok(room.startWords.every(w => g.START_WORD_POOL.includes(w)), '回退默认词池');
+});
+
+test('主题词包：服务端清洗词包（去重/去空白/过滤非法词），视图对全员可见', () => {
+  const room = lobbyRoom();
+  const messy = { id: 'pk9', name: ' 海洋 ', theme: ' 主题 ',
+    words: ['海浪', ' 贝壳 ', '海浪', '', '带 空格', '超'.repeat(13), '灯塔'] };
+  assert.strictEqual(g.setWordPack(room, 'p0', messy), null);
+  assert.strictEqual(room.wordPack.name, '海洋');
+  assert.deepStrictEqual(room.wordPack.words, ['海浪', '贝壳', '灯塔']);
+  const view = g.publicView(room, 'p1');
+  assert.strictEqual(view.wordPack.name, '海洋');
+  assert.deepStrictEqual(view.wordPack.words, ['海浪', '贝壳', '灯塔']);
+  // 未选用时视图为 null
+  const room2 = lobbyRoom();
+  assert.strictEqual(g.publicView(room2, 'p1').wordPack, null);
+});

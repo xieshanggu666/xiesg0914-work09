@@ -25,6 +25,13 @@
     <p id="home-error" class="error"></p>
     <div class="card practice-entry">
       <div>
+        <h3>我的词包 <span class="badge shield">本机</span></h3>
+        <p class="hint">围绕一个主题准备起始词候选（如「海洋」「校园」）。建房后房主可在大厅选用词包，所有人开局前都能看到主题与候选词，开局从中不重复抽取起始词。</p>
+      </div>
+      <button id="btn-packs-home" class="primary">我的词包</button>
+    </div>
+    <div class="card practice-entry">
+      <div>
         <h3>战术练习 <span class="badge shield">单机</span></h3>
         <p class="hint">不用等朋友：3 个固定局面，练习延长词链、保护关键连接和理解级联拆除。进度保存在本浏览器。</p>
       </div>
@@ -53,6 +60,36 @@
       <ul id="history-list"></ul>
       <p class="hint">记录保存在本浏览器中；点「进入 / 回看」凭本机会话重返房间。</p>
     </div>
+  </section>
+
+  <!-- 我的词包：创建 / 编辑 / 删除 -->
+  <section id="screen-packs" class="screen hidden">
+    <header class="practice-head">
+      <button id="btn-packs-back" class="link">← 返回首页</button>
+      <h2>我的词包</h2>
+      <p class="hint">词包只保存在本浏览器。建房后在大厅选用，开局从候选词中不重复抽取起始词。</p>
+    </header>
+    <div class="row">
+      <button id="btn-pack-new" class="primary">新建词包</button>
+    </div>
+    <div id="pack-editor" class="card hidden">
+      <h3 id="pack-editor-title">新建词包</h3>
+      <label>名称 <input id="pack-name" maxlength="12" placeholder="例如：海洋奇缘"></label>
+      <p class="field-error" id="err-pack-name"></p>
+      <label>主题说明（可选） <input id="pack-theme" maxlength="60" placeholder="例如：一切都与大海有关"></label>
+      <p class="field-error" id="err-pack-theme"></p>
+      <label>候选起始词（每行一个，或用逗号分隔，至少 3 个）
+        <textarea id="pack-words" rows="6" placeholder="海浪&#10;贝壳&#10;灯塔"></textarea>
+      </label>
+      <p class="field-error" id="err-pack-words"></p>
+      <p class="field-error" id="err-pack-general"></p>
+      <div class="row">
+        <button id="btn-pack-save" class="primary">保存词包</button>
+        <button id="btn-pack-cancel">取消</button>
+      </div>
+    </div>
+    <ul id="pack-list" class="practice-list"></ul>
+    <p id="pack-empty" class="hint hidden">还没有词包。点「新建词包」，为你的对局准备一个主题吧。</p>
   </section>
 
   <!-- 战术练习：关卡列表 -->
@@ -221,6 +258,13 @@
         </div>
       </div>
     </div>
+    <div class="card" id="pack-card">
+      <h3>主题词包</h3>
+      <div id="pack-host-row" class="row hidden">
+        <select id="pack-select"></select>
+      </div>
+      <div id="pack-info"></div>
+    </div>
     <button id="btn-start" class="primary big hidden">开始游戏</button>
     <p class="hint" id="lobby-wait">等待房主开始…</p>
     <div class="row"><button id="btn-exit-spectate" class="hidden">退出观战</button></div>
@@ -351,6 +395,7 @@
 <script src="rules.js"></script>
 <script src="practice.js"></script>
 <script src="favorites.js"></script>
+<script src="packs.js"></script>
 <script src="client.js"></script>
 </body>
 </html>

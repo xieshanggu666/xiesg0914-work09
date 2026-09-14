@@ -48,6 +48,9 @@ function newRoom(code, hostId, hostName) {
     ruleSet: { ...DEFAULT_RULESET },
     players: [],    // {id,name,color,connected,tokensLeft}
     spectators: [], // {id,name,connected} 只读观战者，不参与对局
+    // 主题词包快照：房主在大厅从自己的本机词包中选用，内容随房间状态广播，
+    // 所有玩家开局前都能看到主题与候选词；null 表示使用内置默认词池。
+    wordPack: null, // {id,name,theme,words[]}
     startWords: [],
     nodes: [],      // {id,word,ownerId,parentId,relation,reason,reinforced,turnCreated,survivedAsRoot}
     log: [],        // 回放事件日志
@@ -145,6 +148,44 @@ function setRuleSet(room, playerId, patch) {
 
 function clamp(v, lo, hi) { return Math.max(lo, Math.min(hi, v)); }
 
+// ---------- 主题词包 ----------
+
+// 服务端不采信客户端词包原文：只保留白名单字段并逐个清洗（与客户端 packs.js 校验口径一致），
+// 词数/长度超限直接拒绝。id 只是客户端用来对照"当前选中的是本机哪个词包"的回显，不做校验。
+function sanitizeWordPack(pack) {
+  if (!pack || typeof pack !== 'object') return '词包数据无效';
+  const name = String(pack.name || '').trim();
+  if (!name || name.length > 12) return '词包名称需为 1~12 个字';
+  const theme = String(pack.theme || '').trim();
+  if (theme.length > 60) return '主题说明最多 60 个字';
+  const words = [];
+  for (const w of Array.isArray(pack.words) ? pack.words : []) {
+    const word = String(w == null ? '' : w).trim();
+    if (!word || word.length > 12 || /\s/.test(word)) continue;
+    if (!words.includes(word)) words.push(word);
+  }
+  if (words.length < 3) return '词包至少需要 3 个有效候选词';
+  if (words.length > 60) return '词包最多 60 个候选词';
+  return { id: String(pack.id || '').slice(0, 40), name, theme, words };
+}
+
+// 房主在大厅选择/更换/清除主题词包；pack 为 null 表示改回默认词池
+function setWordPack(room, playerId, pack) {
+  if (isSpectator(room, playerId)) return '观战者不能选择词包';
+  if (playerId !== room.hostId) return '只有房主可以选择词包';
+  if (room.phase !== 'lobby') return '游戏开始后不能更换词包';
+  if (pack === null || pack === undefined) {
+    room.wordPack = null;
+    logEvent(room, 'wordpack', { wordPack: null });
+    return null;
+  }
+  const cleaned = sanitizeWordPack(pack);
+  if (typeof cleaned === 'string') return cleaned;
+  room.wordPack = cleaned;
+  logEvent(room, 'wordpack', { wordPack: cleaned });
+  return null;
+}
+
 // ---------- 开局 ----------
 
 function startGame(room, playerId, rng = Math.random) {
@@ -152,9 +193,13 @@ function startGame(room, playerId, rng = Math.random) {
   if (playerId !== room.hostId) return '只有房主可以开始游戏';
   if (room.phase !== 'lobby') return '游戏已开始';
   if (room.players.length < 2) return '至少需要 2 名玩家';
-  const pool = [...START_WORD_POOL];
+  // 起始词来源：房主选定的主题词包优先，否则用内置默认词池；均不重复抽取。
+  // 词包候选词不足 startWordCount 时有多少抽多少。
+  const source = room.wordPack && room.wordPack.words.length ? room.wordPack.words : START_WORD_POOL;
+  const pool = [...source];
   room.startWords = [];
-  for (let i = 0; i < room.ruleSet.startWordCount; i++) {
+  const count = Math.min(room.ruleSet.startWordCount, pool.length);
+  for (let i = 0; i < count; i++) {
     const idx = Math.floor(rng() * pool.length);
     room.startWords.push(pool.splice(idx, 1)[0]);
   }
@@ -165,6 +210,7 @@ function startGame(room, playerId, rng = Math.random) {
   room.players.forEach(p => { p.tokensLeft = room.ruleSet.challengeTokens; });
   room.phase = 'playing';
   logEvent(room, 'start', { startWords: room.startWords, ruleSet: room.ruleSet,
+    wordPack: room.wordPack ? room.wordPack.name : null,
     order: room.players.map(p => p.id) });
   beginTurn(room, 0);
   return null;
@@ -427,7 +473,7 @@ function buildReplay(room) {
       case 'start':
         snap.nodes = ev.startWords.map((w, i) => ({ id: `start${i}`, word: w,
           ownerId: null, parentId: null, reinforced: true, relation: null, reason: '起始词' }));
-        label = `开局，起始词：${ev.startWords.join('、')}`;
+        label = `${ev.wordPack ? `主题词包「${ev.wordPack}」` : ''}开局，起始词：${ev.startWords.join('、')}`;
         break;
       case 'turn':
         snap.turn = { playerId: ev.playerId, turnNumber: ev.turnNumber };
@@ -478,6 +524,7 @@ function publicView(room, forPlayerId) {
     you: forPlayerId,
     spectating: isSpectator(room, forPlayerId),
     ruleSet: room.ruleSet,
+    wordPack: room.wordPack || null,
     players: room.players.map(p => ({ id: p.id, name: p.name, color: p.color,
       connected: p.connected, tokensLeft: p.tokensLeft })),
     spectators: (room.spectators || []).map(s => ({ id: s.id, name: s.name,
@@ -496,7 +543,7 @@ module.exports = {
   RELATION_TYPES, DEFAULT_RULESET, START_WORD_POOL, MAX_SPECTATORS,
   newRoom, addPlayer, addSpectator, isSpectator, removeSpectator, removeAllSpectators,
   resetConnectionsAfterRestart,
-  setRuleSet, startGame,
+  setRuleSet, setWordPack, sanitizeWordPack, startGame,
   playWord, reinforce, endTurn, challenge, resolveChallenge, ensureAdjudicatorOnline,
   computeScores, buildReplay, publicView, cascadeRemove, historySummary,
 };

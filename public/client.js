@@ -45,6 +45,10 @@
     // 个人收藏本（纯本地，不经过服务器）：收藏条目数组，见 favorites.js
     get favorites() { return JSON.parse(localStorage.getItem('wt_favorites') || '[]'); },
     set favorites(v) { localStorage.setItem('wt_favorites', JSON.stringify(v)); },
+    // 我的词包（纯本地）：{id,name,theme,words[],updatedAt}[]，见 packs.js。
+    // 房主在大厅选用后词包内容才作为快照发给服务器，本机列表始终只存在这里。
+    get packs() { return JSON.parse(localStorage.getItem('wt_packs') || '[]'); },
+    set packs(v) { localStorage.setItem('wt_packs', JSON.stringify(v)); },
   };
 
   let ws = null, state = null, prevState = null;
@@ -78,7 +82,7 @@
   // 会产生写操作/重复提交的消息：socket 不可用时一律不发并提示，
   // 作为按钮禁用之外的兜底，防止断线期间从弹窗提交陈旧操作。
   const WRITE_TYPES = new Set([
-    'createRoom', 'joinRoom', 'spectate', 'setRules', 'startGame',
+    'createRoom', 'joinRoom', 'spectate', 'setRules', 'setWordPack', 'startGame',
     'play', 'reinforce', 'endTurn', 'challenge', 'resolve',
   ]);
 
@@ -463,6 +467,13 @@
       flashRulesCard();
       if (cur.you !== cur.hostId) toast('房主更新了本局规则');
     }
+    // 大厅里词包选择变化：非房主玩家弹提示，主题与候选词已在词包卡片中展示
+    if (prev && cur.phase === 'lobby' &&
+        JSON.stringify(prev.wordPack || null) !== JSON.stringify(cur.wordPack || null)) {
+      if (cur.you !== cur.hostId) {
+        toast(cur.wordPack ? `房主选择了主题词包「${cur.wordPack.name}」` : '房主改回了默认词池');
+      }
+    }
     if (cur.phase === 'playing' && cur.turn) {
       if (!prev || !prev.turn || prev.turn.turnNumber !== cur.turn.turnNumber) {
         if (cur.turn.playerId === cur.you) {
@@ -640,6 +651,7 @@
     const isHost = state.you === state.hostId;
     $('btn-edit-rules').classList.toggle('hidden', !isHost);
     $('btn-start').classList.toggle('hidden', !isHost);
+    renderPackCard(isHost);
     // 断线重连中：开始游戏/保存规则等会产生写操作的入口一律锁定，恢复后随状态刷新解锁
     $('btn-start').disabled = roomOffline();
     $('btn-save-rules').disabled = rulesSavePending || roomOffline();
@@ -662,6 +674,45 @@
       <li>计分：词 = 1+深度 分，加固 +1，最长链 ×2 奖励</li>
     </ul>`;
   }
+
+  // ---------- 大厅：主题词包 ----------
+  // 所有人都能在大厅看到当前选用的词包（主题与候选词）；只有房主能换选。
+  // 房主的下拉选项来自本机词包（localStorage），选中后词包内容作为快照发给服务器。
+
+  let packSelectSig = ''; // 下拉选项签名：本机词包或当前选中变化时才重建，避免打字/刷新时闪烁
+
+  function renderPackCard(isHost) {
+    const wp = state.wordPack || null;
+    $('pack-host-row').classList.toggle('hidden', !isHost);
+    if (isHost) {
+      const sig = JSON.stringify([store.packs.map(p => [p.id, p.name, p.words.length]), wp && wp.id]);
+      if (sig !== packSelectSig) {
+        packSelectSig = sig;
+        $('pack-select').innerHTML = '<option value="">默认词池</option>' +
+          store.packs.map(p =>
+            `<option value="${p.id}">${esc(p.name)}（${p.words.length} 词）</option>`).join('');
+      }
+      // 当前选中的词包可能已在本机被删除：下拉回退到「默认词池」，房间快照仍由 pack-info 展示
+      $('pack-select').value = wp && store.packs.some(p => p.id === wp.id) ? wp.id : '';
+      $('pack-select').disabled = roomOffline();
+    }
+    $('pack-info').innerHTML = wp
+      ? `<div class="pack-theme-line">主题词包：<b>${esc(wp.name)}</b>${wp.theme ? ` · ${esc(wp.theme)}` : ''}</div>
+         <div class="pack-words">${wp.words.map(w => `<span class="pack-chip">${esc(w)}</span>`).join('')}</div>
+         <p class="hint">开局将从以上 ${wp.words.length} 个候选词中不重复抽取
+           ${Math.min(state.ruleSet.startWordCount, wp.words.length)} 个起始词。</p>`
+      : `<p class="hint">未选用主题词包，开局将从默认词池抽取起始词。
+           ${isHost ? '可先在首页「我的词包」创建词包，再回到这里选择。' : '房主可以在大厅选用主题词包。'}</p>`;
+  }
+
+  $('pack-select').onchange = () => {
+    if (roomOffline()) return toast('正在重连，操作暂时不可用');
+    const id = $('pack-select').value;
+    if (!id) { send({ type: 'setWordPack', pack: null }); return; }
+    const p = WTPacks.find(store.packs, id);
+    if (!p) return toast('这个词包已不在本机，请重新选择');
+    send({ type: 'setWordPack', pack: { id: p.id, name: p.name, theme: p.theme, words: p.words } });
+  };
 
   function renderGame() {
     const t = state.turn;
@@ -1487,6 +1538,101 @@
     store.favorites = entries;
     renderReview();
   }
+
+  // ---------- 我的词包（纯本地管理；大厅选用时才把内容发给服务器） ----------
+
+  let editingPackId = null; // null=编辑器关闭；''=新建；否则为正在编辑的词包 id
+
+  function openPacks() {
+    closePackEditor();
+    renderPacks();
+    showScreen('packs');
+  }
+
+  function renderPacks() {
+    const packs = store.packs;
+    $('pack-empty').classList.toggle('hidden', packs.length > 0);
+    $('pack-list').innerHTML = packs.map(p => `
+      <li>
+        <div>
+          <div class="pl-title">${esc(p.name)} <span class="badge shield">${p.words.length} 词</span></div>
+          <div class="pl-sub">${p.theme ? esc(p.theme) : '（无主题说明）'}</div>
+          <div class="pl-sub">候选词：${p.words.slice(0, 8).map(esc).join('、')}${p.words.length > 8 ? ' …' : ''}</div>
+        </div>
+        <div class="row">
+          <button class="link" data-pack-edit="${p.id}">编辑</button>
+          <button class="link danger-link" data-pack-del="${p.id}">删除</button>
+        </div>
+      </li>`).join('');
+    $('pack-list').querySelectorAll('[data-pack-edit]').forEach(btn => {
+      btn.onclick = () => openPackEditor(btn.dataset.packEdit);
+    });
+    $('pack-list').querySelectorAll('[data-pack-del]').forEach(btn => {
+      btn.onclick = () => {
+        const p = WTPacks.find(store.packs, btn.dataset.packDel);
+        if (!p) return;
+        if (!confirm(`删除词包「${p.name}」？已选用它的房间不受影响（房间里是快照）。`)) return;
+        store.packs = WTPacks.remove(store.packs, p.id);
+        if (editingPackId === p.id) closePackEditor();
+        renderPacks();
+        toast('词包已删除');
+      };
+    });
+  }
+
+  function clearPackErrors() {
+    for (const id of ['err-pack-name', 'err-pack-theme', 'err-pack-words', 'err-pack-general']) {
+      $(id).textContent = '';
+    }
+    for (const id of ['pack-name', 'pack-theme', 'pack-words']) $(id).classList.remove('invalid');
+  }
+
+  // id 为 '' 时新建；否则编辑对应词包并回填
+  function openPackEditor(id) {
+    const p = id ? WTPacks.find(store.packs, id) : null;
+    editingPackId = id || '';
+    $('pack-editor-title').textContent = p ? '编辑词包' : '新建词包';
+    $('pack-name').value = p ? p.name : '';
+    $('pack-theme').value = p ? p.theme : '';
+    $('pack-words').value = p ? p.words.join('\n') : '';
+    clearPackErrors();
+    $('pack-editor').classList.remove('hidden');
+  }
+
+  function closePackEditor() {
+    editingPackId = null;
+    $('pack-editor').classList.add('hidden');
+  }
+
+  $('btn-packs-home').onclick = openPacks;
+  $('btn-packs-back').onclick = () => showScreen('home');
+  $('btn-pack-new').onclick = () => {
+    if ($('pack-editor').classList.contains('hidden')) openPackEditor('');
+    else closePackEditor();
+  };
+  $('btn-pack-cancel').onclick = closePackEditor;
+  $('btn-pack-save').onclick = () => {
+    clearPackErrors();
+    const { errors, pack } = WTPacks.validatePack({
+      name: $('pack-name').value,
+      theme: $('pack-theme').value,
+      wordsText: $('pack-words').value,
+    });
+    for (const [key, msg] of Object.entries(errors)) {
+      $(`err-pack-${key}`).textContent = msg;
+      $(`pack-${key}`).classList.add('invalid');
+    }
+    if (Object.keys(errors).length > 0) return;
+    const wasEditing = !!editingPackId;
+    const { packs, error } = WTPacks.upsert(store.packs, {
+      ...pack, id: editingPackId || WTPacks.makeId(), updatedAt: Date.now(),
+    });
+    if (error) { $('err-pack-general').textContent = error; return; }
+    store.packs = packs;
+    closePackEditor();
+    renderPacks();
+    toast(wasEditing ? '词包已保存' : '词包已创建，可在大厅选用');
+  };
 
   function esc(s) {
     return String(s ?? '').replace(/[&<>"']/g, c =>
