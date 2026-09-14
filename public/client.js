@@ -685,15 +685,20 @@
     const wp = state.wordPack || null;
     $('pack-host-row').classList.toggle('hidden', !isHost);
     if (isHost) {
-      const sig = JSON.stringify([store.packs.map(p => [p.id, p.name, p.words.length]), wp && wp.id]);
+      // 当前生效的词包可能已在本机被删除（房间里的快照仍在生效）：
+      // 为它补一个"当前选择"选项并如实选中，不能误显示成默认词池
+      const missing = !!(wp && !store.packs.some(p => p.id === wp.id));
+      const sig = JSON.stringify([store.packs.map(p => [p.id, p.name, p.words.length]), wp && wp.id, missing]);
       if (sig !== packSelectSig) {
         packSelectSig = sig;
         $('pack-select').innerHTML = '<option value="">默认词池</option>' +
           store.packs.map(p =>
-            `<option value="${p.id}">${esc(p.name)}（${p.words.length} 词）</option>`).join('');
+            `<option value="${p.id}">${esc(p.name)}（${p.words.length} 词）</option>`).join('') +
+          (missing
+            ? `<option value="${wp.id}">${esc(wp.name)}（本机已删除，仍是本局选择）</option>`
+            : '');
       }
-      // 当前选中的词包可能已在本机被删除：下拉回退到「默认词池」，房间快照仍由 pack-info 展示
-      $('pack-select').value = wp && store.packs.some(p => p.id === wp.id) ? wp.id : '';
+      $('pack-select').value = wp ? wp.id : '';
       $('pack-select').disabled = roomOffline();
     }
     $('pack-info').innerHTML = wp

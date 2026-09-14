@@ -200,3 +200,40 @@ test('大厅：房主下拉选用词包发给服务器，词包信息全员可�
   assert.ok($('pack-host-row')._cls.has('hidden'), '非房主不显示选择行');
   assert.ok($('pack-info').innerHTML.includes('海洋奇缘'));
 });
+
+test('回归：已选用的词包被本机删除后，大厅下拉仍显示当前生效的词包而非默认词池', () => {
+  // 建包并在大厅选用
+  $('btn-packs-home').onclick();
+  $('btn-pack-new').onclick();
+  $('pack-name').value = '临时包';
+  $('pack-theme').value = '';
+  $('pack-words').value = '甲\n乙\n丙';
+  $('btn-pack-save').onclick();
+  const pack = storedPacks()[0];
+  recvState(); // 回到大厅（自己是房主）
+  $('pack-select').value = pack.id;
+  $('pack-select').onchange();
+  recvState({ wordPack: { id: pack.id, name: pack.name, theme: '', words: pack.words } });
+  assert.strictEqual($('pack-select').value, pack.id);
+
+  // 本机删除该词包（房间里的快照仍在生效）
+  $('btn-packs-home').onclick();
+  $('pack-list').querySelectorAll('[data-pack-del]')[0].onclick();
+  assert.ok(!storedPacks().some(p => p.id === pack.id), '词包已从本机删除');
+
+  // 回到大厅重渲染：下拉必须如实显示当前生效的词包，不能回退成「默认词池」
+  recvState({ wordPack: { id: pack.id, name: pack.name, theme: '', words: pack.words } });
+  assert.strictEqual($('pack-select').value, pack.id, '下拉仍选中当前生效的词包');
+  assert.ok($('pack-select').innerHTML.includes('本机已删除'), '合成选项标注词包已不在本机');
+  assert.ok(!$('pack-select').innerHTML.includes('selected'), '选中态由 value 决定');
+  assert.ok($('pack-info').innerHTML.includes('临时包'), '词包信息仍展示房间快照');
+
+  // 房主此时改选默认词池，流程不受影响
+  $('pack-select').value = '';
+  $('pack-select').onchange();
+  const clears = sentMsgs.filter(m => m.type === 'setWordPack');
+  assert.strictEqual(clears.at(-1).pack, null);
+  recvState({ wordPack: null });
+  assert.strictEqual($('pack-select').value, '');
+  assert.ok(!$('pack-select').innerHTML.includes('本机已删除'), '清除后合成选项消失');
+});
